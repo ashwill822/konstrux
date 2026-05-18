@@ -7,16 +7,25 @@ const config: CapacitorConfig = {
   server: {
     url: 'https://konstrux.com.au',
     cleartext: false,
+    // Allow navigation to Manus OAuth portal and API domains so login
+    // stays within the WKWebView instead of opening external Safari.
     allowNavigation: [
       'konstrux.com.au',
       '*.konstrux.com.au',
+      '*.manus.im',
+      'manus.im',
+      '*.manus.space',
+      'manus.space',
     ],
   },
   ios: {
-    contentInset: 'always',
+    // 'never' lets the web app control its own safe area via CSS env() variables.
+    // 'always' adds an extra system inset on top of what the web app already handles,
+    // which was causing the double-overlap of the status bar.
+    contentInset: 'never',
     allowsLinkPreview: false,
     scrollEnabled: true,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0A0A0A',
   },
 };
 
