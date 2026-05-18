@@ -31,7 +31,8 @@ workflows:
           PLIST=$CM_BUILD_DIR/ios/App/App/Info.plist
           PLIST_BUDDY=/usr/libexec/PlistBuddy
           $PLIST_BUDDY -c "Set :CFBundleShortVersionString 1.0.0" $PLIST
-          $PLIST_BUDDY -c "Set :CFBundleVersion $(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID") + 1))" $PLIST
+          BUILD_NUMBER=$(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID" --pre-release-version 1.0.0 2>/dev/null || echo 0) + 1))
+          $PLIST_BUDDY -c "Set :CFBundleVersion $BUILD_NUMBER" $PLIST
       - name: Build iOS app
         script: |
           xcode-project use-profiles
@@ -39,7 +40,7 @@ workflows:
             --workspace "ios/$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
     artifacts:
-      - build/ios/ipa/*.ipa
+      - ios/App/build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
     publishing:
