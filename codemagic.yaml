@@ -10,7 +10,7 @@ workflows:
         distribution_type: app_store
         bundle_identifier: com.konstrux.app
       vars:
-        XCODE_WORKSPACE: "App/App.xcworkspace"
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         BUNDLE_ID: "com.konstrux.app"
         APP_STORE_APP_ID: "6770413821"
@@ -21,6 +21,9 @@ workflows:
       - name: Set up Capacitor iOS project
         script: |
           npx cap sync ios
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
       - name: Set bundle identifier
         script: |
           PLIST=$CM_BUILD_DIR/ios/App/App/Info.plist
@@ -35,12 +38,11 @@ workflows:
           $PLIST_BUDDY -c "Set :CFBundleVersion $BUILD_NUMBER" $PLIST
       - name: Build iOS app
         script: |
-          xcode-project use-profiles
           xcode-project build-ipa \
-            --workspace "ios/$XCODE_WORKSPACE" \
+            --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
     artifacts:
-      - ios/App/build/ios/ipa/*.ipa
+      - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
       - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
     publishing:
