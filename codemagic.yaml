@@ -9,8 +9,6 @@ workflows:
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.konstrux.app
-        provisioning_profile: KONSTRUX App Store Profile
-        certificate: KONSTRUX Distribution
       vars:
         XCODE_WORKSPACE: "App/App.xcworkspace"
         XCODE_SCHEME: "App"
