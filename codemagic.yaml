@@ -13,7 +13,7 @@ workflows:
         XCODE_WORKSPACE: "App/App.xcworkspace"
         XCODE_SCHEME: "App"
         BUNDLE_ID: "com.konstrux.app"
-        APP_STORE_APP_ID: "REPLACE_WITH_YOUR_APP_ID"
+        APP_STORE_APP_ID: "6770413821"
     scripts:
       - name: Install dependencies
         script: |
