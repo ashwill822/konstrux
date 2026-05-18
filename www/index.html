@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>KONSTRUX</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0f172a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: #f97316;
+    }
+    .loading {
+      text-align: center;
+    }
+    .loading h1 {
+      font-size: 2rem;
+      font-weight: 900;
+      letter-spacing: 0.1em;
+      margin: 0;
+    }
+    .loading p {
+      color: #94a3b8;
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="loading">
+    <h1>KONSTRUX</h1>
+    <p>Loading...</p>
+  </div>
+  <script>
+    // This app uses a remote server URL - this file is just a placeholder
+    // The actual app loads from https://konstrux.com.au via capacitor.config.ts server.url
+    window.location.href = 'https://konstrux.com.au';
+  </script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "konstrux-ios",
+  "version": "1.0.0",
+  "description": "KONSTRUX iOS app via Capacitor",
+  "main": "index.js",
+  "scripts": {
+    "cap": "cap"
+  },
+  "dependencies": {
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

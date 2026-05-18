@@ -1,0 +1,12 @@
+node_modules/
+.DS_Store
+*.xcuserstate
+ios/App/Pods/
+ios/App/App/public/
+*.ipa
+*.dSYM.zip
+*.dSYM
+DerivedData/
+build/
+.env
+.env.local
