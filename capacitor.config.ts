@@ -19,10 +19,10 @@ const config: CapacitorConfig = {
     ],
   },
   ios: {
-    // 'never' lets the web app control its own safe area via CSS env() variables.
-    // 'always' adds an extra system inset on top of what the web app already handles,
-    // which was causing the double-overlap of the status bar.
-    contentInset: 'never',
+    // 'always' tells iOS to pass the real safe area inset values (Dynamic Island,
+    // status bar height) into the WebView so CSS env(safe-area-inset-top) works.
+    // Without this, env(safe-area-inset-top) returns 0 and the header overlaps the status bar.
+    contentInset: 'always',
     allowsLinkPreview: false,
     scrollEnabled: true,
     backgroundColor: '#0A0A0A',
