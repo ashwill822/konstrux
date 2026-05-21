@@ -1,92 +1,248 @@
-import Foundation
+import UIKit
+import WebKit
 import Capacitor
-import AuthenticationServices
 
 /**
- * OAuthPlugin — wraps ASWebAuthenticationSession for iOS OAuth flows.
+ * OAuthPlugin — native iOS OAuth using WKWebView with sessionStorage injection.
  *
- * Why ASWebAuthenticationSession instead of @capacitor/browser (SFSafariViewController)?
+ * ROOT CAUSE OF "Authorize params not found":
+ * The Manus portal stores OAuth params (appId, redirectUri, state) in sessionStorage
+ * when it loads with type=signIn. After Google auth, api.manus.im redirects back to
+ * manus.im/app-auth?type=accounts — with ALL params in the URL. However, the portal's
+ * JavaScript reads from sessionStorage (not the URL). On iOS, the cross-origin redirect
+ * from api.manus.im to manus.im clears sessionStorage, so the portal throws the error.
  *
- * SFSafariViewController creates an isolated browsing context. When the Manus portal
- * redirects from Google back to manus.im/app-auth?type=accounts, the portal's
- * sessionStorage is cleared (new page load in the same VC). The portal then cannot
- * find its stored OAuth params and shows "Authorize params not found".
+ * FIX:
+ * Use WKWebView instead of SFSafariViewController or ASWebAuthenticationSession.
+ * WKWebView lets us intercept page loads and inject JavaScript. When the portal loads
+ * with type=accounts (after Google redirect), we inject JS to populate sessionStorage
+ * with the params extracted from the URL before the portal's own JS executes.
  *
- * ASWebAuthenticationSession:
- *   - Shares Safari's full cookie store, so the Manus server-side session persists
- *     through the Google redirect chain.
- *   - Natively intercepts a custom URL scheme (konstrux://) and delivers the final
- *     redirect URL to the completion handler — no sessionStorage dependency.
- *   - Handles app-switching (2FA, Google prompt) correctly without losing state.
+ * NOTE on Capacitor 6 plugin registration:
+ * The CAPBridgedPlugin protocol conformance is handled by the CAP_PLUGIN macro in
+ * OAuthPlugin.m. The Swift class only needs to extend CAPPlugin.
  */
+
 @objc(OAuthPlugin)
-public class OAuthPlugin: CAPPlugin, ASWebAuthenticationPresentationContextProviding {
+public class OAuthPlugin: CAPPlugin {
 
-    private var authSession: ASWebAuthenticationSession?
-    private var pendingCall: CAPPluginCall?
+    private var authController: OAuthWebViewController?
 
-    /**
-     * start(url, callbackScheme)
-     *
-     * Opens url in ASWebAuthenticationSession. When the session redirects to
-     * a URL whose scheme matches callbackScheme, the session closes and the
-     * full callback URL is returned to JavaScript.
-     *
-     * On error or user cancellation, returns { error: "..." }.
-     */
     @objc func start(_ call: CAPPluginCall) {
-        guard let urlString = call.getString("url"),
-              let url = URL(string: urlString),
-              let scheme = call.getString("callbackScheme") else {
-            call.reject("url and callbackScheme are required")
+        guard let urlString = call.getString("url"), let url = URL(string: urlString) else {
+            call.reject("Invalid URL")
+            return
+        }
+        let callbackScheme = call.getString("callbackScheme") ?? "konstrux"
+
+        NSLog("[OAuthPlugin] start() url=%@ callbackScheme=%@", urlString, callbackScheme)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            let controller = OAuthWebViewController(
+                url: url,
+                callbackScheme: callbackScheme,
+                onCallback: { [weak self] callbackUrl in
+                    NSLog("[OAuthPlugin] ✅ Callback received: %@", callbackUrl.absoluteString)
+                    DispatchQueue.main.async {
+                        self?.authController?.dismiss(animated: true) {
+                            self?.authController = nil
+                        }
+                    }
+                    call.resolve(["url": callbackUrl.absoluteString])
+                },
+                onCancel: { [weak self] in
+                    NSLog("[OAuthPlugin] User cancelled")
+                    DispatchQueue.main.async {
+                        self?.authController?.dismiss(animated: true) {
+                            self?.authController = nil
+                        }
+                    }
+                    call.resolve(["cancelled": true])
+                }
+            )
+            self.authController = controller
+
+            let nav = UINavigationController(rootViewController: controller)
+            nav.modalPresentationStyle = .fullScreen
+            self.bridge?.viewController?.present(nav, animated: true)
+        }
+    }
+}
+
+// MARK: - WKWebView Auth Controller
+
+class OAuthWebViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
+    private var webView: WKWebView!
+    private let initialUrl: URL
+    private let callbackScheme: String
+    private let onCallback: (URL) -> Void
+    private let onCancel: () -> Void
+
+    // Store OAuth params from the initial URL so we can restore them after Google redirect
+    private var storedAppId: String = ""
+    private var storedRedirectUri: String = ""
+    private var storedState: String = ""
+
+    init(url: URL, callbackScheme: String, onCallback: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
+        self.initialUrl = url
+        self.callbackScheme = callbackScheme
+        self.onCallback = onCallback
+        self.onCancel = onCancel
+
+        // Extract OAuth params from the initial URL
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let queryItems = components.queryItems {
+            for item in queryItems {
+                let value = item.value?.removingPercentEncoding ?? item.value ?? ""
+                switch item.name {
+                case "appId": self.storedAppId = value
+                case "redirectUri": self.storedRedirectUri = value
+                case "state": self.storedState = value
+                default: break
+                }
+            }
+        }
+
+        NSLog("[OAuthWebVC] Stored params: appId=%@ redirectUri=%@ state(40)=%@",
+              storedAppId, storedRedirectUri, String(storedState.prefix(40)))
+
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+
+        title = "Sign In"
+        navigationItem.leftBarButtonItem = UIBarButtonItem(
+            title: "Cancel", style: .plain, target: self, action: #selector(cancelTapped)
+        )
+
+        // Use default (non-ephemeral) data store so Safari cookies are shared.
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = WKWebsiteDataStore.default()
+
+        webView = WKWebView(frame: view.bounds, configuration: config)
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        view.addSubview(webView)
+
+        NSLog("[OAuthWebVC] Loading: %@", initialUrl.absoluteString)
+        webView.load(URLRequest(url: initialUrl))
+    }
+
+    @objc func cancelTapped() { onCancel() }
+
+    // MARK: - WKNavigationDelegate
+
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
             return
         }
 
-        DispatchQueue.main.async {
-            self.pendingCall = call
+        NSLog("[OAuthWebVC] nav: %@", String(url.absoluteString.prefix(120)))
 
-            let session = ASWebAuthenticationSession(
-                url: url,
-                callbackURLScheme: scheme
-            ) { [weak self] callbackURL, error in
-                guard let self = self else { return }
+        // Intercept the custom URL scheme callback (konstrux://oauth/done?token=...)
+        if url.scheme?.lowercased() == callbackScheme.lowercased() {
+            NSLog("[OAuthWebVC] ✅ Intercepted callback: %@", url.absoluteString)
+            decisionHandler(.cancel)
+            onCallback(url)
+            return
+        }
 
-                if let error = error {
-                    let nsError = error as NSError
-                    // User cancelled — not a hard error
-                    if nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                        self.pendingCall?.resolve(["cancelled": true])
-                    } else {
-                        self.pendingCall?.reject(error.localizedDescription)
-                    }
-                    self.pendingCall = nil
-                    self.authSession = nil
-                    return
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let currentUrl = webView.url else { return }
+        NSLog("[OAuthWebVC] didFinish: %@", String(currentUrl.absoluteString.prefix(120)))
+
+        // Only inject on manus.im pages
+        guard let host = currentUrl.host, host.contains("manus.im") else { return }
+        guard let components = URLComponents(url: currentUrl, resolvingAgainstBaseURL: false) else { return }
+
+        let queryItems = components.queryItems ?? []
+        let typeParam = queryItems.first(where: { $0.name == "type" })?.value ?? ""
+
+        NSLog("[OAuthWebVC] Manus portal type=%@", typeParam)
+
+        // Inject sessionStorage on both signIn and accounts pages.
+        // On accounts page: params are in the URL but sessionStorage was cleared by the
+        // cross-origin redirect from api.manus.im. We restore them here.
+        let appId = queryItems.first(where: { $0.name == "appId" })?.value?.removingPercentEncoding
+                    ?? storedAppId
+        let redirectUri = queryItems.first(where: { $0.name == "redirectUri" })?.value?.removingPercentEncoding
+                          ?? storedRedirectUri
+        let state = queryItems.first(where: { $0.name == "state" })?.value?.removingPercentEncoding
+                    ?? storedState
+
+        guard !appId.isEmpty, !redirectUri.isEmpty, !state.isEmpty else {
+            NSLog("[OAuthWebVC] Missing params for injection, skipping")
+            return
+        }
+
+        NSLog("[OAuthWebVC] Injecting sessionStorage: appId=%@ type=%@", appId, typeParam)
+
+        let paramsJson = """
+        {"appId":"\(escJS(appId))","redirectUri":"\(escJS(redirectUri))","state":"\(escJS(state))","type":"signIn","responseType":"code"}
+        """
+
+        let js = """
+        (function() {
+            try {
+                var key = 'webdev_oauth_params';
+                var existing = sessionStorage.getItem(key);
+                console.log('[OAuthFix] type=\(typeParam) existing=' + (existing ? 'found' : 'empty'));
+                if (!existing) {
+                    sessionStorage.setItem(key, JSON.stringify(\(paramsJson)));
+                    console.log('[OAuthFix] Injected sessionStorage params for type=\(typeParam)');
                 }
-
-                if let callbackURL = callbackURL {
-                    self.pendingCall?.resolve(["url": callbackURL.absoluteString])
-                } else {
-                    self.pendingCall?.reject("No callback URL received")
-                }
-                self.pendingCall = nil
-                self.authSession = nil
+            } catch(e) {
+                console.error('[OAuthFix] Error: ' + e);
             }
+        })();
+        """
 
-            // prefersEphemeralWebBrowserSession = false means we share Safari cookies.
-            // This is critical: the Manus session cookie set during Google auth must
-            // be available to the portal when it loads with type=accounts.
-            session.prefersEphemeralWebBrowserSession = false
-            session.presentationContextProvider = self
-
-            self.authSession = session
-            session.start()
+        webView.evaluateJavaScript(js) { _, error in
+            if let error = error {
+                NSLog("[OAuthWebVC] JS injection error: %@", error.localizedDescription)
+            } else {
+                NSLog("[OAuthWebVC] JS injection OK for type=%@", typeParam)
+            }
         }
     }
 
-    // MARK: - ASWebAuthenticationPresentationContextProviding
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        NSLog("[OAuthWebVC] nav failed: %@", error.localizedDescription)
+    }
 
-    public func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        return self.bridge?.viewController?.view.window ?? UIWindow()
+    // Allow Google sign-in windows (target=_blank) to open in the same webview
+    func webView(_ webView: WKWebView,
+                 createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url {
+            NSLog("[OAuthWebVC] New window → same view: %@", url.absoluteString)
+            webView.load(navigationAction.request)
+        }
+        return nil
+    }
+
+    // MARK: - Helpers
+
+    private func escJS(_ str: String) -> String {
+        return str
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
     }
 }

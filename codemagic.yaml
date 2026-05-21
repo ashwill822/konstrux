@@ -21,6 +21,20 @@ workflows:
       - name: Set up Capacitor iOS project
         script: |
           npx cap sync ios
+          # Patch capacitor.config.json to register our local OAuthPlugin.
+          # cap sync only adds npm-based plugins to packageClassList.
+          # OAuthPlugin is a local Swift plugin, so we add it manually.
+          CONFIG_JSON=$CM_BUILD_DIR/ios/App/App/capacitor.config.json
+          python3 -c "
+          import json, sys
+          with open('$CONFIG_JSON') as f:
+              cfg = json.load(f)
+          if 'OAuthPlugin' not in cfg.get('packageClassList', []):
+              cfg.setdefault('packageClassList', []).append('OAuthPlugin')
+          with open('$CONFIG_JSON', 'w') as f:
+              json.dump(cfg, f, indent='\t')
+          print('Patched packageClassList:', cfg['packageClassList'])
+          "
       - name: Set up code signing
         script: |
           xcode-project use-profiles
