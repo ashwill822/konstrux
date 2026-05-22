@@ -1,4 +1,5 @@
 import UIKit
+import WebKit
 import Capacitor
 
 @UIApplicationMain
@@ -7,8 +8,24 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Clear WKWebView disk cache on every launch.
+        // The app loads konstrux.com.au remotely, and iOS WKWebView can serve stale
+        // cached HTML/JS even when the server sends no-cache headers.
+        // Clearing the cache ensures the latest deployed code is always loaded.
+        clearWebViewCache()
         return true
+    }
+
+    /// Remove all WKWebView cached data (disk cache, memory cache).
+    private func clearWebViewCache() {
+        let dataTypes: Set<String> = [
+            WKWebsiteDataTypeDiskCache,
+            WKWebsiteDataTypeMemoryCache,
+            WKWebsiteDataTypeOfflineWebApplicationCache,
+        ]
+        WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: .distantPast) {
+            NSLog("[AppDelegate] WKWebView cache cleared")
+        }
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
