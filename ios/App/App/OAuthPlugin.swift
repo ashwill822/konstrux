@@ -18,13 +18,22 @@ import Capacitor
  * with type=accounts (after Google redirect), we inject JS to populate sessionStorage
  * with the params extracted from the URL before the portal's own JS executes.
  *
- * NOTE on Capacitor 6 plugin registration:
- * The CAPBridgedPlugin protocol conformance is handled by the CAP_PLUGIN macro in
- * OAuthPlugin.m. The Swift class only needs to extend CAPPlugin.
+ * PLUGIN REGISTRATION (Capacitor 6):
+ * Implement CAPBridgedPlugin directly in Swift — do NOT use the CAP_PLUGIN ObjC macro.
+ * The macro creates a conflicting @interface OAuthPlugin : NSObject which shadows the
+ * Swift class. NSClassFromString("OAuthPlugin") then returns the ObjC stub (not a
+ * CAPPlugin subclass), the CapacitorPlugin cast fails, and the plugin never loads.
+ * The correct pattern matches @capacitor/app and @capacitor/browser.
  */
 
 @objc(OAuthPlugin)
-public class OAuthPlugin: CAPPlugin {
+public class OAuthPlugin: CAPPlugin, CAPBridgedPlugin {
+    // MARK: - CAPBridgedPlugin conformance (required for Capacitor 6 auto-registration)
+    public let identifier = "OAuthPlugin"
+    public let jsName = "OAuth"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise)
+    ]
 
     private var authController: OAuthWebViewController?
 
